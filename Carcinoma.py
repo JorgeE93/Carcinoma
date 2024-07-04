@@ -18,7 +18,7 @@ for package in required_packages:
     except ImportError:
         install_package(package)
 
-        
+
 import boto3
 import pandas as pd
 import numpy as np
@@ -85,7 +85,11 @@ class Data_frame:
 
         for key, map_dict in mappings.items():
             value = df[key].values[0]
-            vector.extend(map_dict.get(value, map_dict.get('default', [])))
+            mapped_value = map_dict.get(value, map_dict.get('default', []))
+            if isinstance(mapped_value, list):
+                vector.extend(mapped_value)
+            else:
+                vector.append(mapped_value)
 
         vector.append(df['PathTumorSize'].values[0])
         vector.append(df['TTPCensor'].values[0])
