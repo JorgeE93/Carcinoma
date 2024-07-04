@@ -1,4 +1,24 @@
+import subprocess
+import sys
 
+# Function to install a package
+def install_package(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# List of required packages
+required_packages = [
+    "openpyxl", "pydicom", "opencv-python", "timm", "optuna",
+    "torch", "torchvision", "boto3"
+]
+
+# Install each required package
+for package in required_packages:
+    try:
+        __import__(package)
+    except ImportError:
+        install_package(package)
+
+        
 import boto3
 import pandas as pd
 import numpy as np
