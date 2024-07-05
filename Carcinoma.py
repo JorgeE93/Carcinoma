@@ -268,22 +268,26 @@ def printChart(train_data, valid_data, epoch):
     train_acc = [acc for _, acc in train_data]
     valid_loss = [loss for loss, _ in valid_data]
     valid_acc = [acc for _, acc in valid_data]
-    epoch_count = range(1, epoch + 2)
+    epoch_count = list(range(1, epoch + 2))
 
+    plt.figure()
     plt.plot(epoch_count, train_loss, '-c', label='Train Loss')
     plt.plot(epoch_count, valid_loss, '-g', label='Validation Loss')
     plt.title("Loss per Epoch")
     plt.ylabel("Loss")
     plt.xlabel("Epoch")
     plt.legend(loc='upper left')
+    plt.tight_layout()
     plt.show()
 
+    plt.figure()
     plt.plot(epoch_count, train_acc, '-c', label='Train Accuracy')
     plt.plot(epoch_count, valid_acc, '-g', label='Validation Accuracy')
     plt.title("Accuracy per Epoch")
     plt.ylabel("Accuracy")
     plt.xlabel("Epoch")
     plt.legend(loc='upper left')
+    plt.tight_layout()
     plt.show()
 
 def create_csv(train_data, valid_data, epoch):
@@ -374,11 +378,12 @@ torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     # Call the optimization script
-    from Optimizer import objective
+    from Optimizer import run_optuna
 
 
     # Define a function to train the final model with the best hyperparameters
     def train_final_model():
+        run_optuna()
         # Read best hyperparameters from the file
         with open('best_hyperparameters.txt', 'r') as f:
             best_params = eval(f.read())

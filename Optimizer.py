@@ -32,6 +32,18 @@ def objective(trial):
     return avg_valid_loss  # We want to minimize validation loss
 
 
+def run_optuna():
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=50)
+    best_trial = study.best_trial
+
+    print(f"Best trial: Value: {best_trial.value}, Params: {best_trial.params}")
+
+    # Save the best hyperparameters
+    with open('best_hyperparameters.txt', 'w') as f:
+        f.write(str(best_trial.params))
+
+
 if __name__ == "__main__":
     study = optuna.create_study(direction='minimize')
     study.optimize(objective, n_trials=50)
