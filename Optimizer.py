@@ -2,7 +2,10 @@ import optuna
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import CyclicLR
-from Carcinoma import CarcinomaTrainer, Config, trainloader, validloader, model, device, criterion
+from torch.utils.data import DataLoader
+
+from Carcinoma import CarcinomaTrainer, Config, MyDataset, train_dataset, val_dataset, model, device, criterion, \
+    train_transform, valid_transform
 
 
 def objective(trial):
@@ -17,9 +20,11 @@ def objective(trial):
     config.max_lr = max_lr
     config.batch_size = batch_size
 
-    # Update DataLoader with the new batch size
-    trainloader.batch_size = batch_size
-    validloader.batch_size = batch_size
+    # Create new DataLoaders with the new batch size
+    trainloader = DataLoader(MyDataset(train_dataset, train_transform), batch_size=batch_size, shuffle=True,
+                             num_workers=4)
+    validloader = DataLoader(MyDataset(val_dataset, valid_transform), batch_size=batch_size, shuffle=True,
+                             num_workers=4)
 
     # Initialize model and optimizer with trial parameters
     optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
