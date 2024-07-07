@@ -25,17 +25,21 @@ def create_dataloaders(batch_size):
     train_weights = get_weights(trainset)
     train_sampler = WeightedRandomSampler(train_weights, len(train_weights))
 
-    trainloader = DataLoader(trainset, batch_size=batch_size, sampler=train_sampler, num_workers=4)
-    validloader = DataLoader(validset, batch_size=batch_size, shuffle=True, num_workers=4)
+    trainloader = DataLoader(
+        trainset, batch_size=batch_size, sampler=train_sampler, num_workers=4
+    )
+    validloader = DataLoader(
+        validset, batch_size=batch_size, shuffle=True, num_workers=4
+    )
 
     return trainloader, validloader
 
 
 def objective(trial):
     # Define the hyperparameter search space
-    base_lr = trial.suggest_loguniform('base_lr', 1e-5, 1e-2)
-    max_lr = trial.suggest_loguniform('max_lr', 1e-3, 1e-1)
-    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128])
+    base_lr = trial.suggest_loguniform("base_lr", 1e-5, 1e-2)
+    max_lr = trial.suggest_loguniform("max_lr", 1e-3, 1e-1)
+    batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
 
     # Create new DataLoaders with the new batch size
     trainloader, validloader = create_dataloaders(batch_size)
@@ -49,30 +53,38 @@ def objective(trial):
         nn.Linear(in_features=625, out_features=256),
         nn.ReLU(),
         nn.Dropout(p=0.2),
-        nn.Linear(in_features=256, out_features=4)
+        nn.Linear(in_features=256, out_features=4),
     )
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
-    scheduler = CyclicLR(optimizer, base_lr=base_lr, max_lr=max_lr, step_size_up=5 * len(trainloader), mode='exp_range',
-                         cycle_momentum=False)
+    scheduler = CyclicLR(
+        optimizer,
+        base_lr=base_lr,
+        max_lr=max_lr,
+        step_size_up=5 * len(trainloader),
+        mode="exp_range",
+        cycle_momentum=False,
+    )
 
     trainer = CarcinomaTrainer(criterion, optimizer, scheduler, device, data_frame)
-    avg_valid_loss, _ = trainer.fit(model, trainloader, validloader, epochs=config.epochs)
+    avg_valid_loss, _ = trainer.fit(
+        model, trainloader, validloader, epochs=config.epochs
+    )
 
     return avg_valid_loss  # We want to minimize validation loss
 
 
 def run_optuna():
-    study = optuna.create_study(direction='minimize')
+    study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=50)
     best_trial = study.best_trial
 
     logger.info(f"Best trial: Value: {best_trial.value}, Params: {best_trial.params}")
 
     # Save the best hyperparameters
-    with open('best_hyperparameters.txt', 'w') as f:
+    with open("best_hyperparameters.txt", "w") as f:
         f.write(str(best_trial.params))
 
 
