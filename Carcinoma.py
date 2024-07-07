@@ -19,6 +19,7 @@ for package in required_packages:
         install_package(package)
 
 
+# Carcinoma.py
 import boto3
 import pandas as pd
 import numpy as np
@@ -30,7 +31,7 @@ from torch.optim.lr_scheduler import CyclicLR
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torchvision.transforms import transforms as T
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 import pydicom as di
 import os
 import cv2
@@ -40,10 +41,15 @@ import csv
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
 from collections import Counter
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 s3 = boto3.resource('s3')
 
-class Data_frame:
+class DataFrame:
     def __init__(self):
         bucket = 'myvermabucket123'
         data_key = 'Adrenal-ACC-Ki67-Seg_SupportingData_20230522.xlsx'
@@ -128,14 +134,12 @@ class Data_frame:
         equals = top_class == y_true.view(*top_class.shape)  # Compare with true labels
         return torch.mean(equals.type(torch.FloatTensor))  # Calculate the mean accuracy
 
-df = Data_frame()
-
 class DCMReader:
-    def __init__(self):
+    def __init__(self, data_frame):
         bucket = 'myvermabucket123/Carcinoma/'
         data_key = ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4']
         self.data_location = [f's3://{bucket}/{dk}/' for dk in data_key]
-        _, self.target = df.get_vector()
+        _, self.target = data_frame.get_vector()
 
     def load_images(self):
         images = []
@@ -152,15 +156,13 @@ class DCMReader:
                 images1 = (images1 * 255).astype(np.uint8)
                 images.append([images1, target_image])
                 os.remove(t)
-        print(f"Number of (.dcm) files = {len(images)}")
+        logger.info(f"Number of (.dcm) files = {len(images)}")
         return images
 
     def find_image_target(self, image_name):
         for t in range(len(self.target)):
             if image_name == self.target[t][0]:
                 return self.target[t][1]
-
-dcm = DCMReader()
 
 class Config:
     def __init__(self):
@@ -170,52 +172,29 @@ class Config:
         self.batch_size = 128
         self.img_size = 512
 
-config = Config()
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-print(f"On which device we are on: {device}")
-
-# Load Images
-images = dcm.load_images()
-
-PIL_images = []
-for img, target in tqdm(images):
-    im = Image.fromarray(np.uint16(img)).convert('L')
-    PIL_images.append([im, target])
-
-fig, axs = plt.subplots(2, 5, figsize=(20, 8))
-for ax, (img, target) in zip(axs.flatten(), PIL_images[:10]):
-    ax.imshow(img, cmap='gray')
-    ax.set_title(f"Target: {target}")
-    ax.axis("off")
-plt.tight_layout()
-plt.show()
-
 def get_weights(dataset):
     class_counts = Counter([y for _, y in dataset])
     weights = [1.0 / class_counts[y] for _, y in dataset]
     return weights
 
-# Shuffle Files
-train_dataset, val_dataset = split(PIL_images, train_size=0.8, shuffle=True)
+def train_transform(config):
+    return T.Compose([
+        T.Resize(size=config.img_size),
+        T.RandomHorizontalFlip(),
+        T.RandomVerticalFlip(),
+        T.RandomRotation(degrees=(-30, +30)),
+        T.ToTensor(),
+        T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
+        T.Normalize(mean=[0.485], std=[0.229])
+    ])
 
-# Transform the image
-train_transform = T.Compose([
-    T.Resize(size=config.img_size),
-    T.RandomHorizontalFlip(),
-    T.RandomVerticalFlip(),
-    T.RandomRotation(degrees=(-30, +30)),
-    T.ToTensor(),
-    T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
-    T.Normalize(mean=[0.485], std=[0.229])
-])
-
-# Define transformations for the validation dataset
-valid_transform = T.Compose([
-    T.Resize(size=config.img_size),
-    T.ToTensor(),
-    T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
-    T.Normalize(mean=[0.485], std=[0.229])
-])
+def valid_transform(config):
+    return T.Compose([
+        T.Resize(size=config.img_size),
+        T.ToTensor(),
+        T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
+        T.Normalize(mean=[0.485], std=[0.229])
+    ])
 
 class MyDataset(Dataset):
     def __init__(self, img_list, augmentations):
@@ -232,38 +211,7 @@ class MyDataset(Dataset):
         label = self.img_list[idx][1]
         return img, label
 
-trainset = MyDataset(train_dataset, train_transform)
-validset = MyDataset(val_dataset, valid_transform)
-print(f"Trainset Size: {len(trainset)}")
-print(f"Validset Size: {len(validset)}")
-
-train_weights = get_weights(trainset)
-train_sampler = WeightedRandomSampler(train_weights, len(train_weights))
-
-trainloader = DataLoader(trainset, batch_size=config.batch_size, sampler=train_sampler, num_workers=4)
-validloader = DataLoader(validset, batch_size=config.batch_size, shuffle=True)
-print(f"No. of batches in trainloader: {len(trainloader)}")
-print(f"No. of Total examples: {len(trainloader.dataset)}")
-
-weights = EfficientNet_V2_S_Weights.DEFAULT
-model = efficientnet_v2_s(weights=weights)
-
-for param in model.parameters():
-    param.requires_grad = False
-
-model.classifier = nn.Sequential(
-    nn.Linear(in_features=1280, out_features=625),
-    nn.ReLU(),
-    nn.Dropout(p=0.3),
-    nn.Linear(in_features=625, out_features=256),
-    nn.ReLU(),
-    nn.Dropout(p=0.2),
-    nn.Linear(in_features=256, out_features=4)
-)
-
-model.to(device)
-
-def printChart(train_data, valid_data, epoch):
+def print_chart(train_data, valid_data, epoch):
     train_loss = [loss for loss, _ in train_data]
     train_acc = [acc for _, acc in train_data]
     valid_loss = [loss for loss, _ in valid_data]
@@ -313,10 +261,12 @@ def print_confusion_matrix(actual, predicted, epoch):
     plt.show()
 
 class CarcinomaTrainer:
-    def __init__(self, criterion=None, optimizer=None, scheduler=None):
+    def __init__(self, criterion=None, optimizer=None, scheduler=None, device=None, data_frame=None):
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.device = device
+        self.data_frame = data_frame
         self.train_stats = []
         self.valid_stats = []
 
@@ -324,14 +274,14 @@ class CarcinomaTrainer:
         model.train()
         train_loss, train_acc = 0.0, 0.0
         for images, labels in tqdm(trainloader):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = images.to(self.device), labels.to(self.device)
             logits = model(images)
             loss = self.criterion(logits, labels)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             train_loss += loss.item()
-            train_acc += df.accuracy(logits, labels)
+            train_acc += self.data_frame.accuracy(logits, labels)
         self.train_stats.append((train_loss / len(trainloader), train_acc / len(trainloader)))
         return train_loss / len(trainloader), train_acc / len(trainloader)
 
@@ -341,11 +291,11 @@ class CarcinomaTrainer:
         y_actual, y_predicted = [], []
         with torch.no_grad():
             for images, labels in tqdm(validloader):
-                images, labels = images.to(device), labels.to(device)
+                images, labels = images.to(self.device), labels.to(self.device)
                 logits = model(images)
                 loss = self.criterion(logits, labels)
                 valid_loss += loss.item()
-                valid_acc += df.accuracy(logits, labels)
+                valid_acc += self.data_frame.accuracy(logits, labels)
                 _, predicted = torch.max(logits, 1)
                 y_actual.extend(labels.cpu().numpy())
                 y_predicted.extend(predicted.cpu().numpy())
@@ -358,56 +308,11 @@ class CarcinomaTrainer:
         for i in range(epochs):
             avg_train_loss, avg_train_acc = self.train_batch_loop(model, trainloader)
             avg_valid_loss, avg_valid_acc = self.valid_batch_loop(model, validloader, i)
-            printChart(self.train_stats, self.valid_stats, i)
+            print_chart(self.train_stats, self.valid_stats, i)
             create_csv((avg_train_loss, avg_train_acc), (avg_valid_loss, avg_valid_acc), i)
             if avg_valid_loss <= valid_min_loss:
-                print(f"Valid_loss decreased {valid_min_loss} --> {avg_valid_loss}")
+                logger.info(f"Valid_loss decreased {valid_min_loss} --> {avg_valid_loss}")
                 torch.save(model.state_dict(), 'EfficientNetCarcinomaModel.pth')
                 valid_min_loss = avg_valid_loss
-            print(f"Epoch: {i+1} Train Loss: {avg_train_loss:.6f} Train Acc: {avg_train_acc:.6f}")
-            print(f"Epoch: {i+1} Valid Loss: {avg_valid_loss:.6f} Valid Acc: {avg_valid_acc:.6f}")
-
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=config.base_lr)
-scheduler = CyclicLR(optimizer, base_lr=config.base_lr, max_lr=config.max_lr, step_size_up=5*len(trainloader), mode='exp_range', cycle_momentum=False)
-trainer = CarcinomaTrainer(criterion, optimizer, scheduler)
-trainer.fit(model, trainloader, validloader, epochs=config.epochs)
-torch.save(model.state_dict(), 'EfficientNetCarcinomaModel.pth')
-torch.cuda.empty_cache()
-
-
-if __name__ == "__main__":
-    # Call the optimization script
-    from Optimizer import run_optuna
-
-
-    # Define a function to train the final model with the best hyperparameters
-    def train_final_model():
-        run_optuna()
-        # Read best hyperparameters from the file
-        with open('best_hyperparameters.txt', 'r') as f:
-            best_params = eval(f.read())
-
-        # Update config with best hyperparameters
-        config.base_lr = best_params['base_lr']
-        config.max_lr = best_params['max_lr']
-        config.batch_size = best_params['batch_size']
-
-        # Update DataLoader with the best batch size
-        trainloader.batch_size = config.batch_size
-        validloader.batch_size = config.batch_size
-
-        # Initialize model and optimizer with the best hyperparameters
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.base_lr)
-        scheduler = CyclicLR(optimizer, base_lr=config.base_lr, max_lr=config.max_lr, step_size_up=5 * len(trainloader),
-                             mode='exp_range', cycle_momentum=False)
-
-        trainer = CarcinomaTrainer(criterion, optimizer, scheduler)
-        trainer.fit(model, trainloader, validloader, epochs=config.epochs)
-
-        torch.save(model.state_dict(), 'EfficientNetCarcinomaModel_best.pth')
-        torch.cuda.empty_cache()
-
-
-    # Train the final model
-    train_final_model()
+            logger.info(f"Epoch: {i+1} Train Loss: {avg_train_loss:.6f} Train Acc: {avg_train_acc:.6f}")
+            logger.info(f"Epoch: {i+1} Valid Loss: {avg_valid_loss:.6f} Valid Acc: {avg_valid_acc:.6f}")
