@@ -210,8 +210,10 @@ def train_transform(config):
             T.RandomVerticalFlip(),
             T.RandomRotation(degrees=(-30, +30)),
             T.ToTensor(),
-            T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
-            T.Normalize(mean=[0.485], std=[0.229]),
+            T.Lambda(
+                lambda x: x.expand(3, -1, -1)
+            ),  # Convert single-channel images to 3-channel
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
@@ -221,8 +223,10 @@ def valid_transform(config):
         [
             T.Resize(size=config.img_size),
             T.ToTensor(),
-            T.Lambda(lambda x: x.broadcast_to(3, x.shape[1], x.shape[2])),
-            T.Normalize(mean=[0.485], std=[0.229]),
+            T.Lambda(
+                lambda x: x.expand(3, -1, -1)
+            ),  # Convert single-channel images to 3-channel
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
@@ -238,6 +242,8 @@ class MyDataset(Dataset):
 
     def __getitem__(self, idx):
         img = self.img_list[idx][0]
+        if isinstance(img, np.ndarray):
+            img = Image.fromarray(img)  # Convert numpy array to PIL Image
         img = self.augmentations(img)
         label = self.img_list[idx][1]
         return img, label
